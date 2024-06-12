@@ -100,6 +100,7 @@ class MLP(nn.Module):
         self.c_proj = nn.Linear(
             4 * config.n_embed, config.n_embed, bias=True
         )  # big to small
+        self.c_proj.NANOGPT_SCALE_INIT = 1
 
     def forward(self, x):
         x = self.c_fc(x)
@@ -150,6 +151,21 @@ class GPT2(nn.Module):
 
         # weight sharing scheme
         self.transformer.wte.weight = self.lm_head.weight  # copies the pointer
+
+        # init params
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            std = 0.02
+            if hasattr(module, "NANOGPT_SCALE_INIT"):
+                std *= (2 * self.config.n_layer) ** -0.5
+            torch.nn.init.normal_(module.weight, mean=0.0, std=std)
+            # almost similar to Xavier initialization
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
     @classmethod
     def from_pretrained(cls, model_type):
