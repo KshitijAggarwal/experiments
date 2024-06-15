@@ -3,27 +3,6 @@ from dataclasses import dataclass
 import torch.nn.functional as F
 import torch
 
-# transformer.h.0.ln_1.weight torch.Size([768])
-# transformer.h.0.ln_1.bias torch.Size([768])
-# transformer.h.0.attn.c_attn.weight torch.Size([768, 2304])
-# transformer.h.0.attn.c_attn.bias torch.Size([2304])
-# transformer.h.0.attn.c_proj.weight torch.Size([768, 768])
-# transformer.h.0.attn.c_proj.bias torch.Size([768])
-# transformer.h.0.ln_2.weight torch.Size([768])
-# transformer.h.0.ln_2.bias torch.Size([768])
-# transformer.h.0.mlp.c_fc.weight torch.Size([768, 3072])
-# transformer.h.0.mlp.c_fc.bias torch.Size([3072])
-# transformer.h.0.mlp.c_proj.weight torch.Size([3072, 768])
-# transformer.h.0.mlp.c_proj.bias torch.Size([768])
-
-# @dataclass
-# class GPTConfig:
-#     vocab_size: int = 10
-#     n_embed: int = 100
-#     max_seq_length: int = 100
-#     n_layer: int = 8
-#     n_heads: int = 6
-
 
 @dataclass
 class GPTConfig:
