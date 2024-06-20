@@ -51,8 +51,8 @@ class MultiHeadAttention(nn.Module):
             1, 2
         )  # (B, N, nh, n_embed / nh) -> (B, nh, N, n_embed / nh)
 
-        attn = q @ k.transpose(
-            -1, -2
+        attn = (
+            q @ k.transpose(-1, -2) * k.size(-1) ** (-0.5)
         )  # (B, nh, N, n_embed / nh) x (B, nh, n_embed / nh, N) -> (B, nh, N, N)
 
         # No causal self-attention mask here. No concept of future or past tokens here. It's
@@ -87,29 +87,45 @@ class EncoderBlock(nn.Module):
 class ViT(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.patch_projection = nn.Linear(config.patch_size**2, config.n_embed)
+        assert config.img_size % config.patch_size == 0
+
+        self.patch_projection = nn.Linear(
+            config.channels * config.patch_size**2, config.n_embed
+        )
         self.encoder = nn.ModuleList(
             [EncoderBlock(config) for _ in range(config.n_layer)]
         )
-        # self.pe = nn.Embedding(num_patches)
+
+        self.cls_token = nn.Parameter(torch.randn(1, 1, config.n_embed))
+
+        self.n_patches = config.img_size**2 // config.patch_size**2
+        self.pe = nn.Parameter(torch.randn(1, self.n_patches + 1, config.n_embed))
+
         self.ln = nn.LayerNorm(config.n_embed)
+        self.mlp_head = nn.Linear(config.n_embed, config.num_classes)
         self.config = config
 
     def forward(self, x):
         # reshape x
         B, H, W, C = x.shape
+
         P = self.config.patch_size
 
-        assert (H * W) % (P * P) == 0
+        # assert (H * W) % (P * P) == 0 # not needed. Assert added in init.
+        # n_patches = H * W // (P * P)
 
-        n_patches = H * W * C // (P * P)
-        x = x.view(B, n_patches, P * P)
-        # flatten patches and embed
+        # flatten patches
+        x = x.view(B, self.n_patches, P * P * C)
+
+        # embed patches
         x = self.patch_projection(x)  # B, n_patches, n_embed
 
-        # add class token to patches to get B, n_patches + 1, P, P
+        # add class token to patches to get B, n_patches + 1, n_embed
+        cls_token = self.cls_token.expand(B, -1, -1)  # shape: B, 1, n_embed
+        x = torch.cat((cls_token, x), dim=1)  # B, n_patches + 1, n_embed
 
         # positional encoding
+        x = x + self.pe
 
         # transformer
         for e in self.encoder:
@@ -119,8 +135,9 @@ class ViT(nn.Module):
         x = self.ln(x)  # B, n_patches, n_embed
 
         # classification head?
+        x = x[:, 0, :]  # B, 1, n_embed
 
-        return x
+        return self.mlp_head(x)
 
 
 # %%
@@ -128,23 +145,25 @@ class ViT(nn.Module):
 
 @dataclass
 class ViTConfig:
+    img_size: int = 256
+    channels: int = 3
     patch_size: int = 16
     n_embed: int = 96
     n_layer: int = 8
     n_heads: int = 6
+    num_classes: int = 2
 
 
 B = 2
-H = 96
-W = 96
-C = 3
 
 config = ViTConfig()
 vitb_config = ViTConfig(patch_size=16, n_embed=768, n_heads=12, n_layer=12)
 
 torch.manual_seed(42)
 
-images = torch.randn(B, H, W, C)
+images = torch.randn(
+    B, vitb_config.img_size, vitb_config.img_size, vitb_config.channels
+)
 
 vit = ViT(vitb_config)
 out = vit(images)
