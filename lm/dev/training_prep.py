@@ -142,7 +142,7 @@ def get_lr(step, warmup_steps, max_steps, max_lr, min_lr):
 import time
 
 B, T = 16, 64
-max_lr = 6e-4
+max_lr = 6e-4  # from GPT-3 paper
 min_lr = max_lr * 0.1
 warmup_steps = 10
 max_steps = 50
@@ -151,8 +151,8 @@ train_loader = DataLoaderLite(B, T)
 # training loop
 max_steps = 50
 # optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, betas=(0.9, 0.95), eps=1e-8)
-optimizer = model.configure_optimizer(
-    weight_decay=0.1, learning_rate=6e-4, device=device
+optimizer = model.configure_optimizers(
+    weight_decay=0.1, learning_rate=6e-4, device_type=device
 )
 
 model.train()
