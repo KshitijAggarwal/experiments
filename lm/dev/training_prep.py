@@ -1,17 +1,17 @@
 # %%
-import tiktoken
+# import tiktoken
 
-tinyskp = "/Users/kshitijaggarwal/Documents/Projects/experiments/data/input.txt"
-with open(tinyskp, "r") as f:
-    text = f.read()
+# tinyskp = "/Users/kshitijaggarwal/Documents/Projects/experiments/data/input.txt"
+# with open(tinyskp, "r") as f:
+#     text = f.read()
 
-data = text[:1000]
+# data = text[:1000]
 
-# %%
+# # %%
 
-enc = tiktoken.get_encoding("gpt2")
-tokens = enc.encode(data)
-print(len(data), len(tokens))
+# enc = tiktoken.get_encoding("gpt2")
+# tokens = enc.encode(data)
+# print(len(data), len(tokens))
 
 # %%
 # data for training
@@ -19,9 +19,9 @@ import torch
 
 torch.set_float32_matmul_precision("high")
 
-buf = torch.tensor(tokens[: 24 + 1], dtype=torch.long)
-x = buf[:-1].view(4, 6)
-y = buf[1:].view(4, 6)
+# buf = torch.tensor(tokens[: 24 + 1], dtype=torch.long)
+# x = buf[:-1].view(4, 6)
+# y = buf[1:].view(4, 6)
 
 # %%
 
@@ -32,11 +32,11 @@ model = GPT2(GPTConfig(vocab_size=50304))
 ce = nn.CrossEntropyLoss()  # loss(input, target)
 device = "mps"
 
-B, T = 4, 32
-buf = torch.tensor(tokens[: B * T + 1], dtype=torch.long)
-buf = buf.to(device)
-x = buf[:-1].view(B, T)
-y = buf[1:].view(B, T)
+# B, T = 4, 32
+# buf = torch.tensor(tokens[: B * T + 1], dtype=torch.long)
+# buf = buf.to(device)
+# x = buf[:-1].view(B, T)
+# y = buf[1:].view(B, T)
 
 model.to(device)
 # model = torch.compile(model) # RuntimeError: Dynamo is not supported on Python 3.12+
@@ -141,12 +141,19 @@ def get_lr(step, warmup_steps, max_steps, max_lr, min_lr):
 
 import time
 
+total_batch_size = 2**14  # 2**19  # 0.5M
 B, T = 16, 64
+assert total_batch_size % (B * T) == 0
+grad_accum_steps = total_batch_size // (B * T)
+
+print(f"Total desired batch size: {total_batch_size}")
+print(f"Gradient accumulation steps: {grad_accum_steps}")
+
 max_lr = 6e-4  # from GPT-3 paper
 min_lr = max_lr * 0.1
 warmup_steps = 10
 max_steps = 50
-train_loader = DataLoaderLite(B, T)
+train_loader = DataLoaderLite(B=B, T=T)
 
 # training loop
 max_steps = 50
@@ -158,13 +165,20 @@ optimizer = model.configure_optimizers(
 model.train()
 for step in range(max_steps):
     t0 = time.time()
-    x, y = train_loader.next_batch()
-    x, y = x.to(device), y.to(device)
     optimizer.zero_grad()
-    # with torch.autocast(device_type=device, dtype=torch.bfloat16):
-    logits = model(x.to(device))
-    loss = ce(logits.view(-1, logits.shape[-1]), y.view(-1))
-    loss.backward()
+    loss_accum = 0.0
+    for micro_step in range(grad_accum_steps):
+        x, y = train_loader.next_batch()
+        x, y = x.to(device), y.to(device)
+
+        # with torch.autocast(device_type=device, dtype=torch.bfloat16):
+        logits = model(x.to(device))
+        loss = ce(logits.view(-1, logits.shape[-1]), y.view(-1))
+        loss = (
+            loss / grad_accum_steps
+        )  # because otherwise it is a sum of losses, not average, as we are accumulating steps
+        loss_accum += loss.detach()  # detaching tensor from the graph
+        loss.backward()
 
     # gradient clipping, GPT-3 paper.
     norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -177,9 +191,9 @@ for step in range(max_steps):
     optimizer.step()
     t1 = time.time()
     dt = t1 - t0
-    tokens_per_sec = train_loader.B * train_loader.T / dt
+    tokens_per_sec = train_loader.B * train_loader.T * grad_accum_steps / dt
     print(
-        f"step {step:2d}, loss: {loss.item():.6f}, lr: {lr:.4e}, norm: {norm:.4f}, dt: {dt*1000:.2f}ms, tok/sec: {tokens_per_sec:.2f}"
+        f"step {step:2d}, loss: {loss_accum.item():.6f}, lr: {lr:.4e}, norm: {norm:.4f}, dt: {dt*1000:.2f}ms, tok/sec: {tokens_per_sec:.2f}"
     )
 
 # %%
