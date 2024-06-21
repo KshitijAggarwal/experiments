@@ -16,6 +16,7 @@
 # %%
 # data for training
 import torch
+import math
 
 torch.set_float32_matmul_precision("high")
 
@@ -26,6 +27,7 @@ torch.set_float32_matmul_precision("high")
 # %%
 
 from lm.gpt2 import GPT2, GPTConfig
+from lm.data import DataLoaderLite
 import torch.nn as nn
 
 model = GPT2(GPTConfig(vocab_size=50304))
@@ -81,40 +83,6 @@ model.to(device)
 # %%
 
 # dataloader
-
-import tiktoken
-import math
-
-
-class DataLoaderLite:
-    def __init__(self, B, T):
-        self.B = B
-        self.T = T
-
-        tinyskp = "/Users/kshitijaggarwal/Documents/Projects/experiments/data/input.txt"
-        with open(tinyskp, "r") as f:
-            text = f.read()
-
-        enc = tiktoken.get_encoding("gpt2")
-        tokens = enc.encode(text)
-        self.tokens = torch.tensor(tokens, dtype=torch.long)
-        print(f"Loaded {len(self.tokens)} tokens")
-        print(f"1 Epoch will have {len(self.tokens) // (B * T)} batches")
-
-        self.current_pos = 0
-
-    def next_batch(self):
-        B, T = self.B, self.T
-        start = self.current_pos
-        end = self.current_pos + B * T + 1
-        buf = self.tokens[start:end]
-        x = buf[:-1].view(B, T)
-        y = buf[1:].view(B, T)
-
-        self.current_pos += B * T
-        if self.current_pos + B * T + 1 > len(self.tokens):
-            self.current_pos = 0
-        return x, y
 
 
 # %%
