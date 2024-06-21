@@ -1,4 +1,8 @@
 import math
+import os
+import torch
+from torch.distributed import init_process_group
+import os
 
 
 def get_lr(step, warmup_steps, max_steps, max_lr, min_lr):
@@ -38,3 +42,42 @@ def get_lr(step, warmup_steps, max_steps, max_lr, min_lr):
     assert 0 <= progress <= 1
     coeff = 0.5 * (1.0 + math.cos(math.pi * progress))
     return min_lr + coeff * (max_lr - min_lr)
+
+
+def ddp_setup():
+    # setup DDP (Distributed Data Parallel)
+    # torchrun command sets the env variables: RANK, LOCAL_RANK, WORLD_SIZE
+    # ddp = int(os.environ.get("RANK", -1)) != -1
+    ddp = int(os.environ.get("WORLD_SIZE", "1")) > 1
+    if ddp:
+        if torch.cuda.is_available():
+            backend = "nccl"  # need nccl for cuda + DDP
+        else:
+            backend = "gloo"  # for ddp on cpu
+        init_process_group(backend=backend)
+        ddp_rank = int(os.environ["RANK"])  # uid for all processes across all nodes
+        ddp_local_rank = int(
+            os.environ["LOCAL_RANK"]
+        )  # uid for all processes on a node
+        ddp_world_size = int(os.environ["WORLD_SIZE"])  # total no. of processes running
+        if torch.cuda.is_available():
+            device = f"cuda:{ddp_local_rank}"
+            torch.cuda.set_device(device)
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            device = "mps"
+        else:
+            device = "cpu"
+        master_process = ddp_rank == 0  # for logging, checkpointing, etc
+    else:
+        # non DDP run
+        ddp_rank = 0
+        ddp_local_rank = 0
+        ddp_world_size = 1
+        master_process = True
+        device = "cpu"
+        if torch.cuda.is_available():
+            device = "cuda"
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            device = "mps"
+    print(f"Using device: {device}")
+    return ddp, device, ddp_rank, ddp_local_rank, ddp_world_size, master_process
