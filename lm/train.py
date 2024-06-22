@@ -2,7 +2,7 @@ import torch
 import math
 from lm.gpt2 import GPT2, GPTConfig
 from lm.data import DataLoaderLite
-from lm.utils import get_lr, ddp_setup
+from lm.utils import get_lr, ddp_setup, gen_text
 import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import destroy_process_group
@@ -21,8 +21,9 @@ if torch.cuda.is_available():
     torch.cuda.manual_seed(42)
 
 
-model = GPT2(GPTConfig(vocab_size=50304))
+model = GPT2(GPTConfig(vocab_size=50304, n_layer=1))
 model.to(device)
+model = torch.compile(model)
 
 if ddp:
     model = DDP(model, device_ids=[ddp_local_rank])
@@ -31,8 +32,8 @@ raw_model = model.module if ddp else model
 
 ce = nn.CrossEntropyLoss()
 
-total_batch_size = 2**14  # 2**19  # 0.5M
-B, T = 16, 64
+total_batch_size = 2**19  # 0.5M
+B, T = 32, 512
 assert total_batch_size % (B * T * ddp_world_size) == 0
 grad_accum_steps = total_batch_size // (B * T * ddp_world_size)
 
@@ -64,9 +65,9 @@ for step in range(max_steps):
         x, y = train_loader.next_batch()
         x, y = x.to(device), y.to(device)
 
-        # with torch.autocast(device_type=device, dtype=torch.bfloat16):
-        logits = model(x.to(device))
-        loss = ce(logits.view(-1, logits.shape[-1]), y.view(-1))
+        with torch.autocast(device_type=device, dtype=torch.bfloat16):
+            logits = model(x.to(device))
+            loss = ce(logits.view(-1, logits.shape[-1]), y.view(-1))
         loss = (
             loss / grad_accum_steps
         )  # because otherwise it is a sum of losses, not average, as we are accumulating steps
@@ -94,6 +95,10 @@ for step in range(max_steps):
     if torch.cuda.is_available():
         torch.cuda.synchronize()
 
+    if step % 5 == 0:
+        max_length = 50
+        gen_text(model, 1, max_length, device)
+
     t1 = time.time()
     dt = t1 - t0
     tokens_per_sec = (
@@ -106,4 +111,4 @@ for step in range(max_steps):
 if ddp:
     destroy_process_group()
 
-# torchrun --nproc_per_node=2 train.py
+# torchrun --nproc_per_node=1 train.py
