@@ -85,21 +85,30 @@ def ddp_setup():
     return ddp, device, ddp_rank, ddp_local_rank, ddp_world_size, master_process
 
 
-def gen_text(model, num_return_sequences, max_length, device, prefix="Hello, I'm a language model,"):
+def gen_text(
+    model,
+    num_return_sequences,
+    max_length,
+    device,
+    prefix="Hello, I'm a language model,",
+):
     enc = tiktoken.get_encoding("gpt2")
     tokens = enc.encode(prefix)
     tokens = torch.tensor(tokens, dtype=torch.long)
     tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1)  # (5, 8)
-
     x = tokens.to(device)  # (B, T)
-    
+
     model.eval()
-    
+
     torch.manual_seed(42)
     torch.cuda.manual_seed(42)
     while x.shape[1] < max_length:
         with torch.no_grad():
-            logits = model(x)  # B, T, vocab_size
+            if torch.cuda.is_available():
+                with torch.autocast(device_type=device, dtype=torch.bfloat16):
+                    logits = model(x.to(device))
+            else:
+                logits = model(x.to(device))  # B, T, vocab_size
 
             # take the logits of the last token
             logits = logits[:, -1, :]  # B, vocab_size
@@ -121,5 +130,5 @@ def gen_text(model, num_return_sequences, max_length, device, prefix="Hello, I'm
     for i in range(x.shape[0]):
         dec_tokens = list(x[i, :max_length])
         print(enc.decode(dec_tokens))
-    
+
     model.train()
