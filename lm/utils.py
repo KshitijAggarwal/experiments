@@ -3,6 +3,8 @@ import os
 import torch
 from torch.distributed import init_process_group
 import os
+import tiktoken
+import torch.nn.functional as F
 
 
 def get_lr(step, warmup_steps, max_steps, max_lr, min_lr):
@@ -81,3 +83,43 @@ def ddp_setup():
             device = "mps"
     print(f"Using device: {device}")
     return ddp, device, ddp_rank, ddp_local_rank, ddp_world_size, master_process
+
+
+def gen_text(model, num_return_sequences, max_length, device, prefix="Hello, I'm a language model,"):
+    enc = tiktoken.get_encoding("gpt2")
+    tokens = enc.encode(prefix)
+    tokens = torch.tensor(tokens, dtype=torch.long)
+    tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1)  # (5, 8)
+
+    x = tokens.to(device)  # (B, T)
+    
+    model.eval()
+    
+    torch.manual_seed(42)
+    torch.cuda.manual_seed(42)
+    while x.shape[1] < max_length:
+        with torch.no_grad():
+            logits = model(x)  # B, T, vocab_size
+
+            # take the logits of the last token
+            logits = logits[:, -1, :]  # B, vocab_size
+
+            # softmax to get probabillities
+            probs = F.softmax(logits, -1)  # softmax over vocab size # B, vocab_size
+
+            # sample top k from probs
+            k = 50
+            topk_probs, topk_indices = torch.topk(probs, k=k, dim=-1)  # B, k
+
+            # sample from probs
+            ix = torch.multinomial(topk_probs, 1)  # indices. Shape: B, 1
+
+            xcol = torch.gather(topk_indices, -1, ix)
+
+            x = torch.cat([x, xcol], dim=1)
+
+    for i in range(x.shape[0]):
+        dec_tokens = list(x[i, :max_length])
+        print(enc.decode(dec_tokens))
+    
+    model.train()
