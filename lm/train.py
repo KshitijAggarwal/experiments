@@ -9,11 +9,17 @@ from torch.distributed import destroy_process_group
 import torch.distributed as dist
 
 import time
+import glob 
 
 torch.set_float32_matmul_precision("high")
 
 # DDP Setup
 ddp, device, ddp_rank, ddp_local_rank, ddp_world_size, master_process = ddp_setup()
+
+if 'cuda' in device:
+    device_type = 'cuda'
+else:
+    device_type = device
 
 # all processes get the same seed
 torch.manual_seed(42)
@@ -21,20 +27,20 @@ if torch.cuda.is_available():
     torch.cuda.manual_seed(42)
 
 
-model = GPT2(GPTConfig(vocab_size=50304, n_layer=1))
+model = GPT2(GPTConfig(vocab_size=50304, n_layer=12))
 model.to(device)
-if torch.cuda.is_available():
-    model = torch.compile(model)
+# if torch.cuda.is_available():
+#     model = torch.compile(model)
 if ddp:
     model = DDP(model, device_ids=[ddp_local_rank])
 raw_model = model.module if ddp else model
 
 ce = nn.CrossEntropyLoss()
-total_batch_size = 2**14  # 0.5M
-B, T = 16, 32
+# total_batch_size = 2**14  # 0.5M
+# B, T = 16, 32
 
-# total_batch_size = 2**19  # 0.5M
-# B, T = 32, 512
+total_batch_size = 2**19  # 0.5M
+B, T = 8, 1024
 assert total_batch_size % (B * T * ddp_world_size) == 0
 grad_accum_steps = total_batch_size // (B * T * ddp_world_size)
 
@@ -44,15 +50,15 @@ if master_process:
 
 max_lr = 6e-4  # from GPT-3 paper
 min_lr = max_lr * 0.1
-warmup_steps = 10
-max_steps = 50
+warmup_steps = 715 # 100 is good enough: Karpathy
+max_steps = 19073
 
 train_loader = DataLoaderLite(
     B=B,
     T=T,
     process_rank=ddp_local_rank,
     num_processes=ddp_world_size,
-    tokenfiles=["../data/sample-1MT.npy"],
+    tokenfiles=glob.glob('/workspace/edu_fineweb10B/*train*'),
 )
 
 val_dataloader = DataLoaderLite(
@@ -60,22 +66,27 @@ val_dataloader = DataLoaderLite(
     T=T,
     process_rank=ddp_local_rank,
     num_processes=ddp_world_size,
-    tokenfiles=["../data/sample-1MT.npy"],
+    tokenfiles=glob.glob('/workspace/edu_fineweb10B/*val*'),
 )
 
 # training loop
 optimizer = raw_model.configure_optimizers(
-    weight_decay=0.1, learning_rate=6e-4, device_type=device
+    weight_decay=0.1, learning_rate=6e-4, device_type=device_type
 )
 
 
 def common_step(model, dataloader, device, accum_steps, loss_fn, mode="train"):
+    if 'cuda' in device:
+        device_type = 'cuda'
+    else:
+        device_type = device
+
     loss_accum = 0.0
     for micro_step in range(accum_steps):
         x, y = dataloader.next_batch()
         x, y = x.to(device), y.to(device)
         if torch.cuda.is_available():
-            with torch.autocast(device_type=device, dtype=torch.bfloat16):
+            with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
                 logits = model(x.to(device))
                 loss = loss_fn(logits.view(-1, logits.shape[-1]), y.view(-1))
         else:
@@ -101,10 +112,10 @@ model.train()
 for step in range(max_steps):
     t0 = time.time()
 
-    if step % 10 == 0 and step > 10 - 1:
+    if step % 100 == 0:
         val_accum_steps = 20
         model.eval()
-        val_dataloader.reset()  # ??
+        val_dataloader.reset()
         with torch.no_grad():
             val_loss_accum, model = common_step(
                 model, val_dataloader, device, val_accum_steps, ce, mode="val"
@@ -112,7 +123,7 @@ for step in range(max_steps):
         if master_process:
             print(f"Validation loss: {val_loss_accum.item():.4f}")
 
-    if step % 10 == 0 and step > 10 - 1:
+    if step % 100 == 0 and step > 100 - 1:
         if master_process:
             max_length = 32
             gen_text(model, 1, max_length, device)
@@ -140,9 +151,10 @@ for step in range(max_steps):
     tokens_per_sec = (
         train_loader.B * train_loader.T * grad_accum_steps * ddp_world_size / dt
     )
-    print(
-        f"step {step:2d}, loss: {loss_accum.item():.6f}, lr: {lr:.4e}, norm: {norm:.4f}, dt: {dt*1000:.2f}ms, tok/sec: {tokens_per_sec:.2f}"
-    )
+    if master_process:
+        print(
+            f"step {step:2d}, loss: {loss_accum.item():.6f}, lr: {lr:.4e}, norm: {norm:.4f}, dt: {dt*1000:.2f}ms, tok/sec: {tokens_per_sec:.2f}"
+        )
 
 if ddp:
     destroy_process_group()

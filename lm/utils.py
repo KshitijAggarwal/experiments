@@ -98,6 +98,11 @@ def gen_text(
     tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1)  # (5, 8)
     x = tokens.to(device)  # (B, T)
 
+    if 'cuda' in device:
+        device_type = 'cuda'
+    else:
+        device_type = device
+
     model.eval()
 
     torch.manual_seed(42)
@@ -105,7 +110,7 @@ def gen_text(
     while x.shape[1] < max_length:
         with torch.no_grad():
             if torch.cuda.is_available():
-                with torch.autocast(device_type=device, dtype=torch.bfloat16):
+                with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
                     logits = model(x.to(device))
             else:
                 logits = model(x.to(device))  # B, T, vocab_size
