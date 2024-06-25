@@ -5,6 +5,7 @@ from torch.distributed import init_process_group
 import os
 import tiktoken
 import torch.nn.functional as F
+from dataclasses import dataclass
 
 
 def get_lr(step, warmup_steps, max_steps, max_lr, min_lr):
@@ -98,10 +99,12 @@ def gen_text(
     tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1)  # (5, 8)
     x = tokens.to(device)  # (B, T)
 
-    if 'cuda' in device:
-        device_type = 'cuda'
+    if "cuda" in device:
+        device_type = "cuda"
     else:
         device_type = device
+
+    # device = torch.device(device)
 
     model.eval()
 
@@ -137,3 +140,12 @@ def gen_text(
         print(enc.decode(dec_tokens))
 
     model.train()
+
+
+@dataclass
+class GPTConfig:
+    vocab_size: int = 50257
+    n_embed: int = 768
+    max_seq_length: int = 1024
+    n_layer: int = 12
+    n_heads: int = 12
