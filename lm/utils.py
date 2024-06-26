@@ -34,10 +34,10 @@ def get_lr(step, warmup_steps, max_steps, max_lr, min_lr):
     # warmup + cosine decay LR schedule
     # 1) Linear warmup
     if step < warmup_steps:
-        return max_lr * (step + 1) / warmup_steps
+        return min_lr + (max_lr - min_lr) * (step / warmup_steps)
 
     # 2) if step > max_steps, return min_lr
-    if step > max_steps:
+    if step >= max_steps:
         return min_lr
 
     # 3) cosine decay in between the above two
