@@ -16,41 +16,49 @@ import wandb
 import os
 
 torch.set_float32_matmul_precision("high")
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 
 #########
 # Initial setup
 #########
 
-model_config = GPTConfig(vocab_size=50304, n_layer=1)
+n_layer = 1
+# model_config = GPTConfig(vocab_size=50304, n_layer=n_layer, n_embed=256, max_seq_length=1024, n_heads=4)
+model_config = GPTConfig(vocab_size=50304, n_layer=n_layer, n_embed=512, max_seq_length=1024, n_heads=4)
 model_class = GPT2  # BitNet
-total_batch_size = 2**14  # 2**19 is 0.5M
-B = 16  # 8
-T = 32  # 1024
-max_lr = 2.4e-3  # 6e-4  # from GPT-3 paper
-min_lr = max_lr * 0.1
-warmup_steps = 2  # 715  # 100 is good enough: Karpathy
-max_steps = 10
+total_batch_size = 2**19  # is 0.5M
+B = 64  # 8
+T = 1024  # 1024
+max_lr = 6e-4 * 12 / n_layer  # from GPT-3 paper
+min_lr = 0.1 * max_lr
+# max_lr = 0.0012 # 6e-4 * 12 / n_layer  # from GPT-3 paper
+# min_lr = 0.00012
+max_steps = 19074
+warmup_steps = 190  # 715  # 100 is good enough: Karpathy
 wandb_log = False
-train_files = [
-    "/Users/kshitijaggarwal/Documents/Projects/experiments/data/sample-1MT.npy"
-]
-val_files = train_files
+# train_files = [
+#     "/Users/kshitijaggarwal/Documents/Projects/experiments/data/sample-1MT.npy"
+# ]
+# val_files = train_files
 
-# train_files = glob.glob("/workspace/edu_fineweb10B/*train*")
-# val_files = glob.glob("/workspace/edu_fineweb10B/*val*")
+train_files = glob.glob("/workspace/edu_fineweb10B/*train*")
+val_files = glob.glob("/workspace/edu_fineweb10B/*val*")
 
 weight_decay = 0.1
-val_every_n_steps = 5
-use_compile = False
+val_every_n_steps = 100
+use_compile = True
 #########
 # End setup
 #########
 
+model_name_append = 'interp_29M' #  '31M_interp'
+
 log_dir = "log"
 os.makedirs(log_dir, exist_ok=True)
-log_file = os.path.join(log_dir, f"log.txt")
+log_file = os.path.join(log_dir, f"log_{model_name_append}.txt")
 with open(log_file, "w") as f:  # open for writing to clear the file
     pass
+
 
 # DDP Setup
 ddp, device, ddp_rank, ddp_local_rank, ddp_world_size, master_process = ddp_setup()
@@ -105,10 +113,6 @@ optimizer = raw_model.configure_optimizers(
     weight_decay=weight_decay, learning_rate=6e-4, device_type=device_type
 )
 
-import torch
-import os
-
-
 def save_checkpoint(
     model, model_config, optimizer, loss, step, filename="checkpoint.pth", **kwargs
 ):
@@ -128,7 +132,7 @@ def save_checkpoint(
         # Dataset information
         "dataset_info": kwargs.get("dataset_info", {}),
         # Model architecture
-        "model_name": model.__class__.__name__,
+        "model_name": 'GPT',
         "model_config": model_config,
         # Random states for reproducibility
         "torch_rng_state": torch.get_rng_state(),
@@ -202,9 +206,9 @@ for step in range(max_steps):
             with open(log_file, "a") as f:
                 f.write(f"{step} val {val_loss_accum.item():.4f}\n")
 
-            if step % 10 * val_every_n_steps or last_step:
+            if step % (val_every_n_steps * 10) == 0 or last_step:
                 checkpoint_path = os.path.join(
-                    log_dir, f"model_{raw_model.__class__.__name__}_{step:05d}.pt"
+                    log_dir, f"model_GPT_{step:05d}_{model_name_append}.pt"
                 )
 
                 save_checkpoint(
@@ -272,4 +276,4 @@ if ddp:
 if master_process and wandb_log:
     wandb.finish()
 
-# torchrun --nproc_per_node=1 train.py
+# torchrun --nproc_per_node=2 train.py

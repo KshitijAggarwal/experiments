@@ -48,17 +48,17 @@ class CausalSelfAttention(nn.Module):
             1, 2
         )  # B, T, nh, head_size -> B, nh, T, head_size
 
-        # out = F.scaled_dot_product_attention(q, k, v, is_causal=True)  # flash attention
+        out = F.scaled_dot_product_attention(q, k, v, is_causal=True)  # flash attention
         # B and nh are treated as batch dimension.
-        attn = (
-            q @ k.transpose(-1, -2) * k.size(-1) ** (-0.5)
-        )  # (B, nh, T, head_size) x (B, nh, head_size, T) -> (B, nh, T, T)
+        # attn = (
+        #     q @ k.transpose(-1, -2) * k.size(-1) ** (-0.5)
+        # )  # (B, nh, T, head_size) x (B, nh, head_size, T) -> (B, nh, T, T)
 
-        attn = attn.masked_fill(
-            self.bias[:, :, :T, :T] == 0, float("-inf")
-        )  # (B, nh, T, T)
-        attn = F.softmax(attn, dim=-1)
-        out = attn @ v  # (B, nh, T, T) x (B, nh, T, head_size) -> (B, nh, T, head_size)
+        # attn = attn.masked_fill(
+        #     self.bias[:, :, :T, :T] == 0, float("-inf")
+        # )  # (B, nh, T, T)
+        # attn = F.softmax(attn, dim=-1)
+        # out = attn @ v  # (B, nh, T, T) x (B, nh, T, head_size) -> (B, nh, T, head_size)
         out = (
             out.transpose(1, 2).contiguous().view((B, T, n_embed))
         )  # (B, nh, T, head_size) -> (B, T, nh, head_size) -> (B, T, nh * head_size)
