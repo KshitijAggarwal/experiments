@@ -89,15 +89,49 @@ def ddp_setup():
 def gen_text(
     model,
     num_return_sequences,
-    max_length,
-    device,
+    max_length=0,
+    ntokens=0,
+    device="cpu",
     prefix="Hello, I'm a language model,",
+    return_format="text",
+    return_new=False,
 ):
-    enc = tiktoken.get_encoding("gpt2")
-    tokens = enc.encode(prefix)
+    """
+    Generate text using the given model.
+
+    Args:
+        model (torch.nn.Module): The language model to use for generating text.
+        num_return_sequences (int): The number of sequences to generate.
+        max_length (int): The maximum length (in tokens) of each generated sequence.
+        ntokens (int): The number of tokens to generate.
+        device (str): The device to use for generating text.
+        prefix (str, optional): The prefix to use to start generating text. It can either be
+        a string or a list of tokens. Defaults to "Hello, I'm a language model,".
+        return_format (str, optional): The format to return the generated text in (could be text or tokens). It can either be
+        "text" or "list". Defaults to "text".
+        return_new (bool, optional): Whether to return only the predictions or the whole sequence.
+
+    Returns:
+        None
+
+    """
+
+    assert ntokens > 0 or max_length > 0
+
+    if type(prefix) == str:
+        enc = tiktoken.get_encoding("gpt2")
+        tokens = enc.encode(prefix)
+    elif type(prefix) == list:
+        tokens = prefix
+    else:
+        raise ValueError("prefix must be either a string or a list of tokens")
     tokens = torch.tensor(tokens, dtype=torch.long)
-    tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1)  # (5, 8)
+    tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1)
     x = tokens.to(device)  # (B, T)
+    B, T = x.shape
+    if max_length > 0:
+        assert T < max_length
+        ntokens = max_length - len(tokens)
 
     if "cuda" in device:
         device_type = "cuda"
@@ -110,13 +144,17 @@ def gen_text(
 
     torch.manual_seed(42)
     torch.cuda.manual_seed(42)
-    while x.shape[1] < max_length:
+    for i in range(ntokens):
         with torch.no_grad():
             if torch.cuda.is_available():
                 with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-                    logits = model(x.to(device))
+                    logits = model(x)
             else:
-                logits = model(x.to(device))  # B, T, vocab_size
+                logits = model(x)  # B, T, vocab_size
+
+            if type(logits) != torch.Tensor:
+                # in case an HF model was given
+                logits = logits.logits
 
             # take the logits of the last token
             logits = logits[:, -1, :]  # B, vocab_size
@@ -135,11 +173,21 @@ def gen_text(
 
             x = torch.cat([x, xcol], dim=1)
 
-    for i in range(x.shape[0]):
-        dec_tokens = list(x[i, :max_length])
-        print(enc.decode(dec_tokens))
-
     model.train()
+
+    if return_new:
+        x = x[:, T:]
+
+    if return_format == "text":
+        ret_text = []
+        for i in range(x.shape[0]):
+            dec_tokens = list(x[i, :])
+            ret_text.append(enc.decode(dec_tokens))
+        return ret_text
+    elif return_format == "tokens":
+        return x
+    else:
+        return None
 
 
 @dataclass
